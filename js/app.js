@@ -4,6 +4,7 @@ import { loadSettings, settingsScreen } from './settings.js';
 import { libraryScreen, editorScreen } from './library.js';
 import { playScreen } from './prompter.js';
 import { recordScreen } from './recorder.js';
+import { historyScreen } from './stats.js';
 
 const app = document.getElementById('app');
 
@@ -11,6 +12,7 @@ const routes = [
   { re: /^\/?$/, tab: 'library', screen: () => libraryScreen(app) },
   { re: /^\/settings$/, tab: 'settings', screen: () => settingsScreen(app) },
   { re: /^\/script\/([\w-]+)$/, sub: true, screen: id => editorScreen(app, id) },
+  { re: /^\/history\/([\w-]+)$/, sub: true, screen: id => historyScreen(app, id) },
   { re: /^\/play\/([\w-]+)$/, full: true, screen: id => playScreen(app, id) },
   { re: /^\/record\/([\w-]+)$/, full: true, screen: id => recordScreen(app, id) },
 ];
@@ -40,6 +42,10 @@ async function route() {
   const c = await r.screen(...params);
   if (n === seq) cleanup = c || null;
   else c?.();
+}
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(err => console.warn('Service Worker:', err));
 }
 
 await loadSettings();

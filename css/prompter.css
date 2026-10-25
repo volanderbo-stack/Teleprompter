@@ -29,6 +29,8 @@ body.fullscreen { overflow: hidden; background: #000; }
   font-weight: 600;
   letter-spacing: -.012em;
   overflow-wrap: break-word;
+  -webkit-hyphens: auto;
+  hyphens: auto;
   will-change: transform;
 }
 .pr-text p { margin: 0 0 .55em; }

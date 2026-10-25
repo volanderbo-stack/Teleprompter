@@ -160,6 +160,7 @@ export async function editorScreen(root, id) {
     <header class="navbar">
       <a class="nav-back" href="#/">${icon('chevron-left')}Сценарії</a>
       <div class="nav-actions">
+        <a class="icon-btn" href="#/history/${id}" aria-label="Історія репетицій">${icon('chart')}</a>
         <button class="icon-btn" data-act="delete" aria-label="Видалити">${icon('trash')}</button>
       </div>
     </header>

@@ -11,5 +11,5 @@ for (const t of tests) {
     console.log(`✗ ${t.name}\n    ${e.message}`);
   }
 }
-console.log(failed ? `\nПровалено: ${failed} з ${tests.length}` : `\nУсі ${tests.length} тестів пройдено`);
+console.log(failed ? `\nПровалено: ${failed} з ${tests.length}` : `\nПройдено тестів: ${tests.length}`);
 process.exitCode = failed ? 1 : 0;

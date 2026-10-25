@@ -3,6 +3,7 @@
 import { PromptSession, bindControls, loadPlayable, modeSwitchHTML } from './prompter.js';
 import { settings } from './settings.js';
 import { icon, esc, sheet, toast, fmtClock, isSheetOpen } from './ui.js';
+import { summaryHTML } from './stats.js';
 
 const MIME_CANDIDATES = [
   'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
@@ -222,10 +223,11 @@ export async function recordScreen(root, id) {
       const blob = await recorder.stop();
       session.pause();
       setRecording(false);
+      const sum = await session.record();
       if (!blob || !blob.size) { toast('Запис порожній'); return; }
-      const next = await videoSheet(blob, script.title, '');
+      const next = await videoSheet(blob, script.title, sum ? `<div class="sheet-stats">${summaryHTML(sum)}</div>` : '');
       if (next === 'done') exit();
-      else session.pr.jumpTo(0);
+      else session.restart();
       return;
     }
     session.pause();

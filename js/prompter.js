@@ -4,9 +4,10 @@
 import { db } from './db.js';
 import { parseScript } from './markup.js';
 import { settings, saveSettings, prompterView } from './settings.js';
-import { icon, esc, clamp, isSheetOpen, toast } from './ui.js';
+import { icon, esc, clamp, isSheetOpen, toast, sheet } from './ui.js';
 import { Tracker } from './matcher.js';
 import { SpeechListener, speechSupported } from './speech.js';
+import { tempo, extraFillers, parseFillers, saveRehearsal, summaryHTML } from './stats.js';
 
 export function renderParsed({ paragraphs }) {
   return paragraphs.map(p => `<p>${p.items.map(it => {
@@ -266,6 +267,7 @@ export class PromptSession {
   play() {
     if (this.pr.pos >= this.pr.words.length) this.pr.jumpTo(0);
     this.startedAt ??= Date.now();
+    if (this.mode === 'manual') this.usedManual = true;
     this.pr.play();
     if (this.mode === 'voice') this.listen();
     this.changed();
@@ -330,6 +332,44 @@ export class PromptSession {
   }
 
   refreshView() { this.pr.applyView(prompterView(this.viewOverrides)); }
+
+  // Підсумок для статистики. Пропуски рахуємо лише якщо весь час читали голосом.
+  summary() {
+    const reached = this.pr.pos;
+    const spoken = this.listener?.finalWords ?? [];
+    const usedVoice = spoken.length > 0;
+    const skipped = usedVoice && !this.usedManual ? this.tracker.skipped(reached) : null;
+    const wordsRead = Math.max(0, reached - (skipped || 0));
+    const scriptRead = this.pr.words.slice(0, reached).map(w => w.norm);
+    return {
+      scriptId: this.script.id,
+      durationMs: Math.round(this.pr.activeMs),
+      totalWords: this.pr.words.length,
+      wordsRead,
+      wpm: tempo(wordsRead, this.pr.activeMs),
+      skipped,
+      fillers: usedVoice ? extraFillers(spoken, scriptRead, parseFillers(settings.fillers)) : null,
+      mode: this.usedManual ? (usedVoice ? 'mixed' : 'manual') : 'voice',
+    };
+  }
+
+  // Зберігає репетицію, якщо вона була змістовною. Повертає підсумок або null.
+  async record() {
+    const s = this.summary();
+    if (s.durationMs < 5000 || s.wordsRead < 5) return null;
+    await saveRehearsal(s).catch(() => {});
+    return s;
+  }
+
+  restart() {
+    this.pause();
+    this.listener = null;
+    this.tracker = new Tracker(this.pr.words.map(w => w.norm));
+    this.pr.activeMs = 0;
+    this.usedManual = false;
+    this.startedAt = null;
+    this.pr.jumpTo(0);
+  }
 
   changed() { this.onChange?.(); }
 
@@ -476,7 +516,27 @@ export async function playScreen(root, id) {
   const screen = root.querySelector('.pr-screen');
   const session = new PromptSession(screen, script);
   const exit = () => { location.hash = `#/script/${id}`; };
-  const finish = () => { session.pause(); exit(); };
+  let finishing = false;
+  const finish = async () => {
+    if (finishing) return;
+    finishing = true;
+    session.pause();
+    const sum = await session.record();
+    if (!sum) { exit(); return; }
+    const choice = await sheet({
+      title: 'Репетицію завершено',
+      html: summaryHTML(sum),
+      actions: [
+        { label: 'Ще раз', value: 'again', icon: 'play', style: 'btn-primary' },
+        { label: 'Історія репетицій', value: 'history', icon: 'chart', style: 'btn-tinted' },
+        { label: 'Готово', value: 'done', style: 'btn-plain' },
+      ],
+    });
+    finishing = false;
+    if (choice === 'again') session.restart();
+    else if (choice === 'history') location.hash = `#/history/${id}`;
+    else exit();
+  };
   session.onFinish = finish;
   const unbind = bindControls(screen, session, { exit, finish });
 

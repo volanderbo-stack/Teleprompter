@@ -35,7 +35,7 @@
       out.append(li);
     }
     const s = document.getElementById('summary');
-    s.textContent = failed ? `Провалено: ${failed} з ${tests.length}` : `Усі ${tests.length} тестів пройдено`;
+    s.textContent = failed ? `Провалено: ${failed} з ${tests.length}` : `Пройдено тестів: ${tests.length}`;
     s.className = failed ? 'fail' : 'pass';
     window.testResult = { total: tests.length, failed };
   </script>

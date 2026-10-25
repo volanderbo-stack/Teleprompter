@@ -31,6 +31,8 @@ const DEFAULTS = {
 export const settings = { ...DEFAULTS };
 
 export async function loadSettings() {
+  // На телефоні типовий шрифт менший, щоб довгі слова вміщалися в рядок.
+  if (matchMedia('(max-width: 600px)').matches) settings.fontSize = 36;
   try {
     Object.assign(settings, (await db.get('kv', 'settings')) || {});
   } catch { /* приватний режим без IndexedDB — працюємо з типовими */ }

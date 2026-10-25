@@ -146,3 +146,24 @@ test('нормалізація слова', () => {
   eq(normalizeWord('Пам’ять!'), normalizeWord('памʼять'));
   eq(normalizeWord("L'Économie"), 'leconomie');
 });
+
+// --- stats ---
+test('слова-паразити: прості, багатослівні й звуки вагання', async () => {
+  const { countFillers, parseFillers } = await import('../js/stats.js');
+  const f = parseFillers('ну, типу, ееее, du coup');
+  const c = countFillers(tokenize('ну я типу думаю еее що ну du coup так'), f);
+  eq(JSON.stringify(c), JSON.stringify({ 'ну': 2, 'типу': 1, 'ееее': 1, 'du coup': 1 }));
+});
+
+test('паразити, які є в самому тексті, не рахуються', async () => {
+  const { extraFillers, parseFillers } = await import('../js/stats.js');
+  const f = parseFillers('ну');
+  const out = extraFillers(tokenize('ну що ж ну почнемо'), tokenize('ну що ж почнемо'), f);
+  eq(out['ну'], 1);
+});
+
+test('темп: слова за хвилину', async () => {
+  const { tempo } = await import('../js/stats.js');
+  eq(tempo(130, 60000), 130);
+  eq(tempo(10, 1000), null);
+});
