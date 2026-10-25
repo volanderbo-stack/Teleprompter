@@ -1,5 +1,6 @@
 // Обгортка над Web Speech API: безперервне розпізнавання з автоперезапуском і сторожем.
-// Віддає назовні масив нормалізованих слів: усі фінальні за сесію + поточні проміжні.
+// Віддає назовні масив нормалізованих слів (усі фінальні за сесію + поточні проміжні)
+// і сирий текст поточного запуску — щоб показати людині, що саме почуто.
 
 import { tokenize } from './matcher.js';
 
@@ -71,7 +72,8 @@ export class SpeechListener {
       for (const r of e.results) (r.isFinal ? fin : tmp).push(...tokenize(r[0].transcript));
       session.final = fin;
       session.interim = tmp;
-      if (rec === this.rec) this.onWords?.(this.words);
+      const text = Array.from(e.results, r => r[0].transcript).join(' ');
+      if (rec === this.rec) this.onWords?.(this.words, text);
     };
     rec.onerror = e => {
       if (e.error === 'no-speech' || e.error === 'aborted') return;

@@ -154,6 +154,13 @@ body.fullscreen { overflow: hidden; background: #000; }
 .pr-mic.live .icon { animation: mic-pulse 1.4s ease-in-out infinite; }
 @keyframes mic-pulse { 50% { opacity: .35; } }
 .pr-screen.voice .pr-mic { display: inline-flex; }
+.pr-heard {
+  display: none; max-width: min(92%, 520px); margin-top: -8px;
+  font-size: 14px; opacity: .7;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pr-heard:empty { visibility: hidden; }
+.pr-screen.voice .pr-heard { display: block; }
 .pr-screen.voice .pr-speed { display: none; }
 
 @media (max-width: 520px) {

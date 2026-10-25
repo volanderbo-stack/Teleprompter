@@ -4,6 +4,8 @@
 // із ділянкою сценарію навколо поточної позиції. Кожна точка, де останнє сказане слово
 // збіглося зі словом сценарію, — кандидат на нову позицію. Що далі кандидат від поточного
 // місця, то сильніший збіг потрібен, щоб туди перескочити; назад — лише за дуже сильного.
+// Якщо надійного збігу немає, текст «іде за голосом»: кожне нове сказане слово, що
+// починається так само, як одне з найближчих слів сценарію, посуває позицію на нього.
 
 import { normalizeWord } from './markup.js';
 
@@ -24,6 +26,9 @@ const TH_FAR = 2.5;
 const TH_BACK = 3.5;
 const TH_GLOBAL = 4.5;
 const DIST_COST = 0.015;
+const WEAK = 0.45;       // збіг лише за початком слова («рухається» ↔ «рухаємо»)
+const FOLLOW_LOOK = 3;   // «іти за голосом»: на скільки слів уперед шукати схоже за початком
+const FOLLOW_MAX = 6;    // і не далі стількох слів від останнього надійного збігу
 
 export function levenshtein(a, b) {
   if (a === b) return 0;
@@ -57,10 +62,18 @@ export function similarity(spoken, script) {
     v = r >= (min <= 3 ? 0.66 : 0.7) ? r : 0;
     // Та сама основа з іншим закінченням («кнопки» → «кнопкам»): розпізнавач часто плутає відмінки.
     if (!v && min >= 4 && commonPrefix(spoken, script) >= Math.max(4, max - 3)) v = 0.7;
+    // Розпізнавач почув лише початок слова — слабкий збіг, вирішує контекст.
+    if (!v && min >= 4 && commonPrefix(spoken, script) >= 3) v = WEAK;
   }
   if (simCache.size > 50000) simCache.clear();
   simCache.set(key, v);
   return v;
+}
+
+// Чи схоже сказане слово на слово сценарію хоча б початком (для «іти за голосом»).
+export function sameStart(spoken, script) {
+  if (spoken.length < 3 || script.length < 3) return false; // «і», «на», «що» є в будь-якій мові
+  return similarity(spoken, script) > 0 || commonPrefix(spoken, script) >= 3;
 }
 
 function commonPrefix(a, b) {
@@ -144,15 +157,17 @@ export class Tracker {
   constructor(scriptNorms) {
     this.script = scriptNorms;
     this.pos = 0;              // індекс наступного слова, яке треба прочитати
+    this.sure = 0;             // позиція після останнього надійного збігу (pos може бути попереду — «за голосом»)
     this.read = new Set();     // слова сценарію, які розпізнавач справді почув
     this.ignoreBefore = 0;     // сказане до цього індексу не враховуємо (після ручного переходу)
+    this.followed = 0;         // сказані слова до цього індексу вже використані для «за голосом»
     this.lastCount = 0;
   }
 
   // Ручний перехід: забуваємо старий хвіст мовлення, щоб він не тягнув позицію назад.
   reset(pos) {
-    this.pos = Math.max(0, Math.min(pos, this.script.length));
-    this.ignoreBefore = this.lastCount;
+    this.pos = this.sure = Math.max(0, Math.min(pos, this.script.length));
+    this.ignoreBefore = this.followed = this.lastCount;
   }
 
   // spoken — усі нормалізовані сказані слова сесії (фінальні + проміжні). Повертає нову позицію.
@@ -160,38 +175,57 @@ export class Tracker {
     this.lastCount = spoken.length;
     // Проміжний результат може «схуднути» (два слова злились в одне) — не даємо хвосту зникнути.
     if (this.ignoreBefore > spoken.length) this.ignoreBefore = spoken.length;
+    if (this.followed > spoken.length) this.followed = spoken.length;
     const tail = spoken.slice(Math.max(this.ignoreBefore, spoken.length - TAIL));
     if (!tail.length || !this.script.length) return this.pos;
-    const anchor = this.pos - 1; // останнє прочитане слово
+    const sureEnd = this.sure - 1; // останнє надійно прочитане слово
+    const front = this.pos - 1;    // де читач, імовірно, зараз (з урахуванням «за голосом»)
 
     const pick = (lo, hi, global) => {
       let best = null;
       for (const c of alignTail(tail, this.script, lo, hi)) {
-        const d = c.end - anchor;
+        const back = c.end < sureEnd;
+        const ahead = c.end - front;
         let need;
         if (global) need = TH_GLOBAL;
-        else if (d === 0) need = 0;
-        else if (d > 0 && d <= NEAR) need = TH_NEAR;
-        else if (d > 0 && d <= MID) need = TH_MID;
-        else if (d > 0) need = TH_FAR;
-        else need = TH_BACK;
-        if (d < 0 && tail.length < 4) continue;
+        else if (c.end === sureEnd) need = 0;
+        else if (back) need = TH_BACK;
+        else if (ahead <= NEAR) need = TH_NEAR;
+        else if (ahead <= MID) need = TH_MID;
+        else need = TH_FAR;
+        if (back && tail.length < 4) continue;
         if (c.score < need) continue;
-        const adj = c.score - DIST_COST * Math.abs(d);
+        const adj = c.score - DIST_COST * Math.abs(ahead);
         if (!best || adj > best.adj) best = { ...c, adj };
       }
       return best;
     };
 
-    const lo = Math.max(0, this.pos - BEHIND);
+    const lo = Math.max(0, this.sure - BEHIND);
     const hi = Math.min(this.script.length, this.pos + AHEAD);
     let best = pick(lo, hi, false);
     if (!best && tail.length >= 5 && (lo > 0 || hi < this.script.length)) best = pick(0, this.script.length, true);
-    if (best) {
+    // Збіг на вже відомому слові нічого нового не каже — тоді лишаємо змогу йти за голосом.
+    if (best && best.end !== sureEnd) {
       best.matched.forEach(i => this.read.add(i));
-      this.pos = best.end + 1;
+      this.pos = this.sure = best.end + 1;
+      this.followed = spoken.length;
+    } else {
+      this.follow(spoken);
     }
     return this.pos;
+  }
+
+  // Розпізнавач не вловив слово чи перекрутив кілька — не стоїмо, а йдемо за новими словами.
+  follow(spoken) {
+    for (let i = Math.max(this.followed, this.ignoreBefore); i < spoken.length; i++) {
+      const w = spoken[i];
+      for (let j = this.pos; j < Math.min(this.script.length, this.pos + FOLLOW_LOOK); j++) {
+        if (j - this.sure >= FOLLOW_MAX) break;
+        if (sameStart(w, this.script[j])) { this.read.add(j); this.pos = j + 1; break; }
+      }
+    }
+    this.followed = spoken.length;
   }
 
   // Пропущені слова: серії з 3+ непочутих слів до поточної позиції.

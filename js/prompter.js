@@ -303,7 +303,7 @@ export class PromptSession {
   listen() {
     this.listener ||= new SpeechListener({
       lang: settings.lang,
-      onWords: words => this.heard(words),
+      onWords: (words, text) => this.heard(words, text),
       onState: s => { this.micState = s; this.changed(); },
       onError: msg => {
         toast(msg, 4500);
@@ -315,8 +315,9 @@ export class PromptSession {
     this.listener.start();
   }
 
-  heard(words) {
+  heard(words, text = words.join(' ')) {
     if (!this.playing || this.mode !== 'voice') return;
+    this.onHeard?.(text.trim().split(/\s+/).slice(-6).join(' '));
     const p = this.tracker.update(words);
     if (p !== this.pr.pos) this.pr.setPos(p);
     // Кінець: дійшли до останнього слова, або лишилось 1–2 (розпізнавач міг їх не почути) і настала тиша.
@@ -423,6 +424,8 @@ export function bindControls(screen, session, { exit, finish, panel = [], fontKe
     keepAwake(session.playing);
   };
   session.onChange = sync;
+  // Що саме почув розпізнавач: видно, чи мікрофон чує, коли текст раптом стоїть.
+  session.onHeard = text => { const el = $('.pr-heard'); if (el) el.textContent = text; };
 
   const speed = d => {
     if (session.mode !== 'manual') return;
@@ -522,6 +525,7 @@ export const transportHTML = () => `
     <button class="pr-btn pr-sm" data-act="faster" aria-label="Швидше">${icon('plus')}</button>
   </div>
   <div class="pr-mic"></div>
+  <div class="pr-heard" aria-live="off"></div>
   <div class="pr-transport">
     <button class="pr-btn" data-act="prev" aria-label="Попередній абзац">${icon('para-back')}</button>
     <button class="pr-btn pr-play" data-act="toggle" aria-label="Старт / пауза">${icon('play')}</button>

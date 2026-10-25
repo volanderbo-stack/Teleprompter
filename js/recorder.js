@@ -232,6 +232,7 @@ export async function recordScreen(root, id) {
         <button class="pr-btn pr-sm pr-aa" data-act="panel" aria-label="Вигляд тексту">Aa</button>
       </div>
       <div class="pr-mic"></div>
+      <div class="pr-heard" aria-live="off"></div>
       <div class="pr-transport">
         <button class="pr-btn" data-act="prev" aria-label="Попередній абзац">${icon('para-back')}</button>
         <button class="pr-btn pr-play pr-play-sm" data-act="toggle" aria-label="Текст: старт / пауза">${icon('play')}</button>
