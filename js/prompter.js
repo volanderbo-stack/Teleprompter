@@ -5,6 +5,8 @@ import { db } from './db.js';
 import { parseScript } from './markup.js';
 import { settings, saveSettings, prompterView } from './settings.js';
 import { icon, esc, clamp, isSheetOpen, toast } from './ui.js';
+import { Tracker } from './matcher.js';
+import { SpeechListener, speechSupported } from './speech.js';
 
 export function renderParsed({ paragraphs }) {
   return paragraphs.map(p => `<p>${p.items.map(it => {
@@ -239,68 +241,142 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && wantAwake) keepAwake(true);
 });
 
-// --- Екран суфлера ---
-export async function playScreen(root, id) {
-  const script = await db.get('scripts', id);
-  if (!script) { location.hash = '#/'; return; }
-  if (!parseScript(script.text).words.length) {
-    toast('Сценарій порожній — додайте текст');
-    location.replace(`#/script/${id}`);
-    return;
+// --- Сесія читання: суфлер + голос або ручна прокрутка ---
+export class PromptSession {
+  constructor(screen, script, viewOverrides = {}) {
+    this.script = script;
+    this.viewOverrides = viewOverrides;
+    this.pr = new Prompter(screen.querySelector('.pr-host'), script.text, prompterView(viewOverrides));
+    this.pr.wpm = settings.manualWpm;
+    this.tracker = new Tracker(this.pr.words.map(w => w.norm));
+    this.listener = null;
+    this.micState = 'idle';
+    this.mode = settings.defaultMode === 'voice' && speechSupported() ? 'voice' : 'manual';
+    this.pr.setMode(this.mode);
+    this.startedAt = null;
+    this.onChange = null;
+    this.onFinish = null;
+    this.pr.onSeek = p => this.tracker.reset(p);
+    this.pr.onEnd = () => this.ended();
+    this.pr.onTap = () => this.toggle();
   }
 
-  root.innerHTML = `<div class="pr-screen">
-    <div class="pr-host"></div>
-    <div class="pr-top">
-      <button class="pr-btn pr-sm" data-act="exit" aria-label="Закрити">${icon('close')}</button>
-      <div class="pr-mid"><span class="pr-progress">0%</span></div>
-      <div class="pr-right">
-        <button class="pr-btn pr-sm" data-act="font-down" aria-label="Менший шрифт">${icon('font-down')}</button>
-        <button class="pr-btn pr-sm" data-act="font-up" aria-label="Більший шрифт">${icon('font-up')}</button>
-        <button class="pr-pill" data-act="finish">Готово</button>
-      </div>
-    </div>
-    <div class="pr-bottom">
-      <div class="pr-speed">
-        <button class="pr-btn pr-sm" data-act="slower" aria-label="Повільніше">${icon('minus')}</button>
-        <span class="pr-speed-val"></span>
-        <button class="pr-btn pr-sm" data-act="faster" aria-label="Швидше">${icon('plus')}</button>
-      </div>
-      <div class="pr-transport">
-        <button class="pr-btn" data-act="prev" aria-label="Попередній абзац">${icon('para-back')}</button>
-        <button class="pr-btn pr-play" data-act="toggle" aria-label="Старт / пауза">${icon('play')}</button>
-        <button class="pr-btn" data-act="next" aria-label="Наступний абзац">${icon('para-fwd')}</button>
-      </div>
-    </div>
-  </div>`;
+  get playing() { return this.pr.playing; }
 
-  const screen = root.querySelector('.pr-screen');
-  const pr = new Prompter(screen.querySelector('.pr-host'), script.text, prompterView());
-  pr.wpm = settings.manualWpm;
+  play() {
+    if (this.pr.pos >= this.pr.words.length) this.pr.jumpTo(0);
+    this.startedAt ??= Date.now();
+    this.pr.play();
+    if (this.mode === 'voice') this.listen();
+    this.changed();
+  }
+
+  pause() {
+    this.pr.pause();
+    this.listener?.stop();
+    clearTimeout(this.endTimer);
+    this.changed();
+  }
+
+  toggle() { this.playing ? this.pause() : this.play(); }
+
+  setMode(mode) {
+    if (mode === this.mode) return;
+    if (mode === 'voice' && !speechSupported()) {
+      toast('Цей браузер не вміє розпізнавати мову. Спробуйте Chrome, Edge або Safari', 4000);
+      return;
+    }
+    const was = this.playing;
+    if (was) this.pause();
+    this.mode = mode;
+    this.pr.setMode(mode);
+    this.tracker.reset(this.pr.pos);
+    if (was) this.play();
+    this.changed();
+  }
+
+  listen() {
+    this.listener ||= new SpeechListener({
+      lang: settings.lang,
+      onWords: words => this.heard(words),
+      onState: s => { this.micState = s; this.changed(); },
+      onError: (code, msg) => {
+        toast(msg, 4500);
+        this.micState = 'error';
+        this.pause();
+        this.setMode('manual');
+      },
+    });
+    try {
+      this.listener.start();
+    } catch {
+      this.listener.onError('start', 'Не вдалося запустити розпізнавання мови');
+    }
+  }
+
+  heard(words) {
+    if (!this.playing || this.mode !== 'voice') return;
+    const p = this.tracker.update(words);
+    if (p !== this.pr.pos) this.pr.setPos(p);
+    if (p >= this.pr.words.length) {
+      clearTimeout(this.endTimer);
+      this.endTimer = setTimeout(() => { if (this.pr.pos >= this.pr.words.length) this.ended(); }, 1500);
+    }
+  }
+
+  ended() {
+    this.pause();
+    this.onFinish?.();
+  }
+
+  refreshView() { this.pr.applyView(prompterView(this.viewOverrides)); }
+
+  changed() { this.onChange?.(); }
+
+  destroy() {
+    clearTimeout(this.endTimer);
+    this.listener?.stop();
+    this.pr.destroy();
+  }
+}
+
+// Кнопки й клавіші, спільні для суфлера і запису.
+export function bindControls(screen, session, { exit, finish }) {
+  const pr = session.pr;
   const $ = s => screen.querySelector(s);
 
   const sync = () => {
-    $('.pr-play').innerHTML = icon(pr.playing ? 'pause' : 'play');
-    screen.classList.toggle('playing', pr.playing);
-    $('.pr-speed-val').textContent = `${pr.wpm} сл/хв`;
-    keepAwake(pr.playing);
+    $('.pr-play').innerHTML = icon(session.playing ? 'pause' : 'play');
+    screen.classList.toggle('playing', session.playing);
+    screen.classList.toggle('voice', session.mode === 'voice');
+    screen.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === session.mode));
+    const speedVal = $('.pr-speed-val');
+    if (speedVal) speedVal.textContent = `${pr.wpm} сл/хв`;
+    const mic = $('.pr-mic');
+    if (mic) {
+      const listening = session.playing && session.micState === 'listening';
+      mic.classList.toggle('live', listening);
+      mic.innerHTML = `${icon(listening ? 'mic' : 'mic-off')}<span>${listening ? 'Слухаю' : session.playing ? 'Підключаю мікрофон…' : 'Пауза'}</span>`;
+    }
+    keepAwake(session.playing);
   };
-  const toggle = () => { pr.playing ? pr.pause() : pr.play(); sync(); };
+  session.onChange = sync;
+
   const speed = d => {
+    if (session.mode !== 'manual') return;
     pr.wpm = clamp(pr.wpm + d, 40, 300);
     saveSettings({ manualWpm: pr.wpm });
     sync();
   };
   const font = d => {
     saveSettings({ fontSize: clamp(settings.fontSize + d, 24, 120) });
-    pr.applyView(prompterView());
+    session.refreshView();
   };
-  const exit = () => { location.hash = `#/script/${id}`; };
-  const finish = () => { pr.pause(); sync(); exit(); };
 
-  pr.onTap = toggle;
-  pr.onPos = p => { $('.pr-progress').textContent = `${Math.round(p / pr.words.length * 100)}%`; };
-  pr.onEnd = () => { sync(); setTimeout(finish, 800); };
+  pr.onPos = p => {
+    const el = $('.pr-progress');
+    if (el) el.textContent = `${Math.round(p / pr.words.length * 100)}%`;
+  };
 
   // Елементи керування тьмяніють під час читання і проявляються від дотику.
   let uiTimer;
@@ -313,9 +389,12 @@ export async function playScreen(root, id) {
   screen.addEventListener('pointerdown', wake);
 
   screen.addEventListener('click', e => {
+    const modeBtn = e.target.closest('[data-mode]');
+    if (modeBtn) { session.setMode(modeBtn.dataset.mode); return; }
     const act = e.target.closest('[data-act]')?.dataset.act;
     const actions = {
-      exit, finish, toggle,
+      exit, finish,
+      toggle: () => session.toggle(),
       prev: () => pr.prevPara(), next: () => pr.nextPara(),
       slower: () => speed(-10), faster: () => speed(10),
       'font-down': () => font(-4), 'font-up': () => font(4),
@@ -326,7 +405,7 @@ export async function playScreen(root, id) {
   const onKey = e => {
     if (isSheetOpen() || e.target.closest?.('input, textarea, select')) return;
     switch (e.key) {
-      case ' ': case 'Enter': case 'MediaPlayPause': toggle(); break;
+      case ' ': case 'Enter': case 'MediaPlayPause': session.toggle(); break;
       case 'ArrowDown': case 'PageDown': pr.nextPara(); break;
       case 'ArrowUp': case 'PageUp': pr.prevPara(); break;
       case 'ArrowRight': speed(10); break;
@@ -342,7 +421,67 @@ export async function playScreen(root, id) {
   return () => {
     window.removeEventListener('keydown', onKey);
     clearTimeout(uiTimer);
-    pr.destroy();
     keepAwake(false);
+  };
+}
+
+export const modeSwitchHTML = () => `<div class="pr-seg">
+  <button data-mode="voice">${icon('mic')}<span>Голос</span></button>
+  <button data-mode="manual">${icon('text')}<span>Вручну</span></button>
+</div>`;
+
+export const transportHTML = () => `
+  <div class="pr-speed">
+    <button class="pr-btn pr-sm" data-act="slower" aria-label="Повільніше">${icon('minus')}</button>
+    <span class="pr-speed-val"></span>
+    <button class="pr-btn pr-sm" data-act="faster" aria-label="Швидше">${icon('plus')}</button>
+  </div>
+  <div class="pr-mic"></div>
+  <div class="pr-transport">
+    <button class="pr-btn" data-act="prev" aria-label="Попередній абзац">${icon('para-back')}</button>
+    <button class="pr-btn pr-play" data-act="toggle" aria-label="Старт / пауза">${icon('play')}</button>
+    <button class="pr-btn" data-act="next" aria-label="Наступний абзац">${icon('para-fwd')}</button>
+  </div>`;
+
+export async function loadPlayable(id) {
+  const script = await db.get('scripts', id);
+  if (!script) { location.replace('#/'); return null; }
+  if (!parseScript(script.text).words.length) {
+    toast('Сценарій порожній — додайте текст');
+    location.replace(`#/script/${id}`);
+    return null;
+  }
+  return script;
+}
+
+// --- Екран суфлера ---
+export async function playScreen(root, id) {
+  const script = await loadPlayable(id);
+  if (!script) return;
+
+  root.innerHTML = `<div class="pr-screen">
+    <div class="pr-host"></div>
+    <div class="pr-top">
+      <button class="pr-btn pr-sm" data-act="exit" aria-label="Закрити">${icon('close')}</button>
+      <div class="pr-mid">${modeSwitchHTML()}<span class="pr-progress">0%</span></div>
+      <div class="pr-right">
+        <button class="pr-btn pr-sm hide-narrow" data-act="font-down" aria-label="Менший шрифт">${icon('font-down')}</button>
+        <button class="pr-btn pr-sm hide-narrow" data-act="font-up" aria-label="Більший шрифт">${icon('font-up')}</button>
+        <button class="pr-pill" data-act="finish">Готово</button>
+      </div>
+    </div>
+    <div class="pr-bottom">${transportHTML()}</div>
+  </div>`;
+
+  const screen = root.querySelector('.pr-screen');
+  const session = new PromptSession(screen, script);
+  const exit = () => { location.hash = `#/script/${id}`; };
+  const finish = () => { session.pause(); exit(); };
+  session.onFinish = finish;
+  const unbind = bindControls(screen, session, { exit, finish });
+
+  return () => {
+    unbind();
+    session.destroy();
   };
 }

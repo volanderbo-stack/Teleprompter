@@ -1,0 +1,10 @@
+{
+  "name": "smart-prompter",
+  "private": true,
+  "type": "module",
+  "description": "Розумний телесуфлер — PWA без збірки й залежностей",
+  "scripts": {
+    "start": "python -m http.server 5173 --bind 127.0.0.1",
+    "test": "node tests/node.js"
+  }
+}

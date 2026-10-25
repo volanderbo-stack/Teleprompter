@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тести суфлера</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; background: Canvas; color: CanvasText; }
+    li { margin: 4px 0; }
+    .pass { color: #1f9d47; }
+    .fail { color: #d70015; }
+    pre { white-space: pre-wrap; margin: 2px 0 0 20px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1 id="summary">Тести…</h1>
+  <ul id="out"></ul>
+  <script type="module">
+    import { tests } from './cases.js';
+    const out = document.getElementById('out');
+    let failed = 0;
+    for (const t of tests) {
+      const li = document.createElement('li');
+      try {
+        await t.fn();
+        li.className = 'pass';
+        li.textContent = `✓ ${t.name}`;
+      } catch (e) {
+        failed++;
+        li.className = 'fail';
+        li.innerHTML = `✗ ${t.name}<pre></pre>`;
+        li.querySelector('pre').textContent = e.message;
+      }
+      out.append(li);
+    }
+    const s = document.getElementById('summary');
+    s.textContent = failed ? `Провалено: ${failed} з ${tests.length}` : `Усі ${tests.length} тестів пройдено`;
+    s.className = failed ? 'fail' : 'pass';
+    window.testResult = { total: tests.length, failed };
+  </script>
+</body>
+</html>

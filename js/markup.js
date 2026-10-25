@@ -7,7 +7,7 @@ export function normalizeWord(s) {
   return s.toLowerCase()
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
-    .replace(/[^\p{L}\p{N}]/gu, '');
+    .replace(/[^\p{L}\p{N}]|[ʹ-ʼ]/gu, ''); // ʼ — «літера-модифікатор», прибираємо явно
 }
 
 export function markKind(tok) {
