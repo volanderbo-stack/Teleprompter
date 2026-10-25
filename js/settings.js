@@ -25,6 +25,11 @@ const DEFAULTS = {
   mirrorX: false,
   mirrorY: false,
   manualWpm: 130,
+  recFontSize: 34,
+  recWidth: 40,
+  recFocus: 14,
+  recHeight: 36,
+  recOpacity: 55,
   fillers: 'ну, типу, ееее, е-е, ем, коротше, як би, euh, du coup, en fait, bah, um, uh, like',
 };
 
@@ -32,7 +37,9 @@ export const settings = { ...DEFAULTS };
 
 export async function loadSettings() {
   // На телефоні типовий шрифт менший, щоб довгі слова вміщалися в рядок.
-  if (matchMedia('(max-width: 600px)').matches) settings.fontSize = 36;
+  if (matchMedia('(max-width: 600px)').matches) Object.assign(settings, { fontSize: 36, recFontSize: 28, recWidth: 100 });
+  // На широкому екрані вужчий рядок, щоб очі менше бігали.
+  else if (matchMedia('(min-width: 1000px)').matches) settings.textWidth = 65;
   try {
     Object.assign(settings, (await db.get('kv', 'settings')) || {});
   } catch { /* приватний режим без IndexedDB — працюємо з типовими */ }
@@ -116,7 +123,7 @@ export async function settingsScreen(root) {
       ${range('fontSize', 'Розмір шрифту', 24, 120, 2, fmts.fontSize)}
       ${range('lineHeight', 'Міжрядковий інтервал', 1, 2.2, 0.05, fmts.lineHeight)}
       ${range('textWidth', 'Ширина тексту', 40, 100, 1, fmts.textWidth)}
-      ${range('focus', 'Лінія читання від верху', 10, 70, 1, fmts.focus)}
+      ${range('focus', 'Лінія читання від верху', 5, 70, 1, fmts.focus)}
     </div>
 
     <div class="group-title">Кольори</div>

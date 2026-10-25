@@ -13,13 +13,15 @@ body.fullscreen { overflow: hidden; background: #000; }
 .pr-viewport {
   position: absolute; inset: 0; overflow: hidden;
   touch-action: none; cursor: pointer;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 9%, #000 88%, transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 9%, #000 88%, transparent 100%);
+  --fade-top: max(0%, calc(var(--pr-focus, 30%) - 12%));
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-top), #000 88%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-top), #000 88%, transparent 100%);
 }
 
 .pr-text {
   position: relative;
-  width: var(--pr-width, 92%);
+  /* Не вужче ~12em: на телефоні малий відсоток інакше ламав би слова. */
+  width: max(var(--pr-width, 92%), min(100%, 12em));
   max-width: 100%;
   margin: 0 auto;
   padding: 0 clamp(16px, 4vw, 40px);
@@ -85,8 +87,9 @@ body.fullscreen { overflow: hidden; background: #000; }
   display: flex; flex-direction: column; align-items: center; gap: 14px;
   padding: 10px 16px calc(var(--sab) + 18px);
 }
-.pr-screen.playing:not(.ui-on) .pr-top,
+.pr-screen.playing:not(.ui-on) .pr-top { opacity: 0; } /* верх звільняємо під текст */
 .pr-screen.playing:not(.ui-on) .pr-bottom { opacity: .28; }
+.pr-screen.panel-open .pr-bottom { visibility: hidden; }
 
 .pr-mid { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pr-right { display: flex; align-items: center; gap: 6px; }
@@ -165,20 +168,23 @@ body.fullscreen { overflow: hidden; background: #000; }
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; transform: scaleX(-1); /* дзеркальне прев'ю, як у камері телефона */
 }
+/* Текст — одразу під камерою, від самого верху екрана. */
 .rec-overlay {
-  position: absolute; left: 0; right: 0; top: 0; height: 42%;
-  padding-top: calc(var(--sat) + 60px);
+  position: absolute; left: 0; right: 0; top: 0;
+  height: var(--rec-h, 36%);
+  padding-top: var(--sat);
+  background: rgba(0, 0, 0, var(--rec-op, .55));
 }
-.rec-overlay .pr-host {
-  position: relative; height: 100%;
-  background: rgba(0, 0, 0, .55);
-  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
-}
+.rec-overlay .pr-host { position: relative; height: 100%; background: transparent; }
 .rec-overlay .pr-viewport {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 82%, transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 82%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 80%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 80%, transparent 100%);
 }
-.rec-screen .pr-bottom { background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, .5) 50%); }
+.rec-screen .pr-bottom { background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, .5) 40%); }
+.rec-bar {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  flex-wrap: wrap;
+}
 
 .rec-timer {
   display: flex; align-items: center; gap: 8px;
@@ -223,3 +229,23 @@ body.fullscreen { overflow: hidden; background: #000; }
 
 .rec-result { display: block; width: 100%; max-height: 50dvh; border-radius: 12px; background: #000; }
 .sheet-note { margin: 8px 0 0; color: var(--text-2); font-size: 13px; text-align: center; overflow-wrap: anywhere; }
+
+/* --- Панель «Aa»: вигляд тексту --- */
+.pr-aa { font-size: 16px; font-weight: 700; letter-spacing: -.02em; }
+.pr-panel {
+  position: absolute; z-index: 7;
+  left: 50%; bottom: calc(var(--sab) + 12px);
+  width: min(440px, calc(100% - 24px));
+  transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 16px 14px; border-radius: 20px;
+  background: rgba(28, 28, 30, .9); color: #fff;
+  -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .4);
+  animation: sheet-up .35s var(--ease);
+}
+.pr-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; font-size: 17px; }
+.pr-panel .pr-pill { height: 34px; color: #000; background: #fff; }
+.pr-slider { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; align-items: center; font-size: 14px; }
+.pr-slider input { grid-column: 1 / -1; width: 100%; margin: 2px 0 0; accent-color: #ffd60a; }
+.pr-slider output { color: rgba(255, 255, 255, .65); font-variant-numeric: tabular-nums; }

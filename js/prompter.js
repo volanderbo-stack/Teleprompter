@@ -243,11 +243,14 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // --- Сесія читання: суфлер + голос або ручна прокрутка ---
+// viewOverrides — об'єкт або функція (щоб брати свіжі значення налаштувань після змін).
+const resolveView = v => (typeof v === 'function' ? v() : v);
+
 export class PromptSession {
   constructor(screen, script, viewOverrides = {}) {
     this.script = script;
     this.viewOverrides = viewOverrides;
-    this.pr = new Prompter(screen.querySelector('.pr-host'), script.text, prompterView(viewOverrides));
+    this.pr = new Prompter(screen.querySelector('.pr-host'), script.text, prompterView(resolveView(viewOverrides)));
     this.pr.wpm = settings.manualWpm;
     this.tracker = new Tracker(this.pr.words.map(w => w.norm));
     this.listener = null;
@@ -331,7 +334,7 @@ export class PromptSession {
     this.onFinish?.();
   }
 
-  refreshView() { this.pr.applyView(prompterView(this.viewOverrides)); }
+  refreshView() { this.pr.applyView(prompterView(resolveView(this.viewOverrides))); }
 
   // Підсумок для статистики. Пропуски рахуємо лише якщо весь час читали голосом.
   summary() {
@@ -381,7 +384,26 @@ export class PromptSession {
 }
 
 // Кнопки й клавіші, спільні для суфлера і запису.
-export function bindControls(screen, session, { exit, finish }) {
+// Панель «Aa»: повзунки вигляду тексту, зміни видно одразу. [ключ, назва, min, max, крок, одиниця]
+export const PLAY_PANEL = [
+  ['fontSize', 'Розмір шрифту', 24, 120, 2, 'px'],
+  ['textWidth', 'Ширина тексту', 30, 100, 1, '%'],
+  ['focus', 'Лінія читання від верху', 5, 70, 1, '%'],
+  ['lineHeight', 'Міжрядковий інтервал', 1, 2.2, 0.05, ''],
+];
+
+const fmtView = (v, unit) => (unit ? `${Math.round(v)}${unit === 'px' ? ' px' : unit}` : Number(v).toFixed(2));
+
+export function panelHTML(defs) {
+  return `<div class="pr-panel" hidden>
+    <div class="pr-panel-head"><b>Вигляд тексту</b><button class="pr-pill" data-act="panel">Готово</button></div>
+    ${defs.map(([k, label, min, max, step, unit]) => `<label class="pr-slider"><span>${label}</span>
+      <output>${fmtView(settings[k], unit)}</output>
+      <input type="range" data-k="${k}" data-unit="${unit}" min="${min}" max="${max}" step="${step}" value="${settings[k]}"></label>`).join('')}
+  </div>`;
+}
+
+export function bindControls(screen, session, { exit, finish, panel = [], fontKey = 'fontSize', onView }) {
   const pr = session.pr;
   const $ = s => screen.querySelector(s);
 
@@ -408,10 +430,31 @@ export function bindControls(screen, session, { exit, finish }) {
     saveSettings({ manualWpm: pr.wpm });
     sync();
   };
+  const applyView = () => { session.refreshView(); onView?.(); };
+  const syncPanel = () => screen.querySelectorAll('.pr-panel [data-k]').forEach(inp => {
+    inp.value = settings[inp.dataset.k];
+    inp.previousElementSibling.textContent = fmtView(inp.value, inp.dataset.unit);
+  });
   const font = d => {
-    saveSettings({ fontSize: clamp(settings.fontSize + d, 24, 120) });
-    session.refreshView();
+    const [, , min = 18, max = 120] = panel.find(p => p[0] === fontKey) ?? [];
+    saveSettings({ [fontKey]: clamp(settings[fontKey] + d, min, max) });
+    syncPanel();
+    applyView();
   };
+  const togglePanel = () => {
+    const p = $('.pr-panel');
+    if (!p) return;
+    p.hidden = !p.hidden;
+    screen.classList.toggle('panel-open', !p.hidden);
+  };
+  screen.addEventListener('input', e => {
+    const k = e.target.dataset.k;
+    if (!k) return;
+    saveSettings({ [k]: Number(e.target.value) });
+    e.target.previousElementSibling.textContent = fmtView(e.target.value, e.target.dataset.unit);
+    applyView();
+  });
+  onView?.();
 
   pr.onPos = p => {
     const el = $('.pr-progress');
@@ -437,7 +480,7 @@ export function bindControls(screen, session, { exit, finish }) {
       toggle: () => session.toggle(),
       prev: () => pr.prevPara(), next: () => pr.nextPara(),
       slower: () => speed(-10), faster: () => speed(10),
-      'font-down': () => font(-4), 'font-up': () => font(4),
+      panel: togglePanel,
     };
     actions[act]?.();
   });
@@ -450,6 +493,8 @@ export function bindControls(screen, session, { exit, finish }) {
       case 'ArrowUp': case 'PageUp': pr.prevPara(); break;
       case 'ArrowRight': speed(10); break;
       case 'ArrowLeft': speed(-10); break;
+      case '+': case '=': font(2); break;
+      case '-': font(-2); break;
       case 'Escape': exit(); break;
       default: return;
     }
@@ -505,12 +550,12 @@ export async function playScreen(root, id) {
       <button class="pr-btn pr-sm" data-act="exit" aria-label="Закрити">${icon('close')}</button>
       <div class="pr-mid">${modeSwitchHTML()}<span class="pr-progress">0%</span></div>
       <div class="pr-right">
-        <button class="pr-btn pr-sm hide-narrow" data-act="font-down" aria-label="Менший шрифт">${icon('font-down')}</button>
-        <button class="pr-btn pr-sm hide-narrow" data-act="font-up" aria-label="Більший шрифт">${icon('font-up')}</button>
+        <button class="pr-btn pr-sm pr-aa" data-act="panel" aria-label="Вигляд тексту">Aa</button>
         <button class="pr-pill" data-act="finish">Готово</button>
       </div>
     </div>
     <div class="pr-bottom">${transportHTML()}</div>
+    ${panelHTML(PLAY_PANEL)}
   </div>`;
 
   const screen = root.querySelector('.pr-screen');
@@ -538,7 +583,7 @@ export async function playScreen(root, id) {
     else exit();
   };
   session.onFinish = finish;
-  const unbind = bindControls(screen, session, { exit, finish });
+  const unbind = bindControls(screen, session, { exit, finish, panel: PLAY_PANEL });
 
   return () => {
     unbind();

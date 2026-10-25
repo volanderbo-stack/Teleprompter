@@ -1,6 +1,6 @@
 // Запис відео: фронтальна камера + напівпрозорий суфлер угорі. У файл потрапляє лише камера і звук.
 
-import { PromptSession, bindControls, loadPlayable, modeSwitchHTML } from './prompter.js';
+import { PromptSession, bindControls, loadPlayable, modeSwitchHTML, panelHTML } from './prompter.js';
 import { settings } from './settings.js';
 import { icon, esc, sheet, toast, fmtClock, isSheetOpen } from './ui.js';
 import { summaryHTML } from './stats.js';
@@ -131,6 +131,21 @@ async function videoSheet(blob, title, extraHTML = '') {
   }
 }
 
+// Окремі налаштування тексту для запису: блок біля камери, вузький, щоб очі не бігали.
+const REC_PANEL = [
+  ['recFontSize', 'Розмір шрифту', 18, 72, 1, 'px'],
+  ['recWidth', 'Ширина тексту', 20, 100, 1, '%'],
+  ['recFocus', 'Лінія читання від верху', 5, 60, 1, '%'],
+  ['recHeight', 'Висота блоку тексту', 15, 80, 1, '%'],
+  ['recOpacity', 'Затемнення фону', 0, 90, 1, '%'],
+];
+
+const recView = () => ({
+  customColors: true, bgColor: '#000000', textColor: '#ffffff',
+  mirrorX: false, mirrorY: false,
+  fontSize: settings.recFontSize, textWidth: settings.recWidth, focus: settings.recFocus,
+});
+
 // --- Екран запису ---
 export async function recordScreen(root, id) {
   const script = await loadPlayable(id);
@@ -139,12 +154,13 @@ export async function recordScreen(root, id) {
   root.innerHTML = `<div class="pr-screen rec-screen">
     <video class="rec-video" playsinline muted autoplay></video>
     <div class="rec-overlay"><div class="pr-host"></div></div>
-    <div class="pr-top">
-      <button class="pr-btn pr-sm" data-act="exit" aria-label="Закрити">${icon('close')}</button>
-      <div class="pr-mid">${modeSwitchHTML()}</div>
-      <div class="rec-timer"><span class="rec-dot"></span><span class="rec-time">0:00</span></div>
-    </div>
     <div class="pr-bottom rec-bottom">
+      <div class="rec-bar">
+        <button class="pr-btn pr-sm" data-act="exit" aria-label="Закрити">${icon('close')}</button>
+        ${modeSwitchHTML()}
+        <div class="rec-timer"><span class="rec-dot"></span><span class="rec-time">0:00</span></div>
+        <button class="pr-btn pr-sm pr-aa" data-act="panel" aria-label="Вигляд тексту">Aa</button>
+      </div>
       <div class="pr-mic"></div>
       <div class="pr-transport">
         <button class="pr-btn" data-act="prev" aria-label="Попередній абзац">${icon('para-back')}</button>
@@ -153,6 +169,7 @@ export async function recordScreen(root, id) {
         <button class="pr-btn" data-act="next" aria-label="Наступний абзац">${icon('para-fwd')}</button>
       </div>
     </div>
+    ${panelHTML(REC_PANEL)}
     <div class="rec-count" hidden></div>
     <div class="rec-error" hidden></div>
   </div>`;
@@ -160,16 +177,18 @@ export async function recordScreen(root, id) {
   const screen = root.querySelector('.rec-screen');
   const $ = s => screen.querySelector(s);
   const video = $('.rec-video');
-  const session = new PromptSession(screen, script, {
-    customColors: true, bgColor: '#000000', textColor: '#ffffff',
-    mirrorX: false, mirrorY: false,
-    fontSize: Math.min(settings.fontSize, 40), focus: 32,
-  });
+  const session = new PromptSession(screen, script, recView);
   let stream = null, recorder = null, timer = null, countdown = null, closed = false;
 
   const exit = () => { location.hash = `#/script/${id}`; };
   session.onFinish = () => {}; // текст закінчився — запис триває, доки його не зупинять
-  const unbind = bindControls(screen, session, { exit, finish: exit });
+  const unbind = bindControls(screen, session, {
+    exit, finish: exit, panel: REC_PANEL, fontKey: 'recFontSize',
+    onView: () => {
+      screen.style.setProperty('--rec-h', `${settings.recHeight}%`);
+      screen.style.setProperty('--rec-op', settings.recOpacity / 100);
+    },
+  });
 
   const showError = msg => {
     const el = $('.rec-error');
