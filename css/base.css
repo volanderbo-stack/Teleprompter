@@ -352,3 +352,7 @@ input[type="color"] { width: 44px; height: 30px; padding: 0; border: 0; border-r
 .row-sub { color: var(--text-3); font-size: 13px; }
 .rehearsal .row-value b { color: var(--text); font-size: 17px; }
 a.icon-btn, a.btn { text-decoration: none; }
+
+.folder-actions { justify-content: flex-start; gap: 20px; }
+.btn-plain-sm { color: var(--accent); font-size: 17px; padding: 4px 0; }
+.btn-plain-sm.danger { color: var(--danger); }

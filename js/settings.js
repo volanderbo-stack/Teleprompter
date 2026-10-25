@@ -146,6 +146,16 @@ export async function settingsScreen(root) {
       ${range('manualWpm', 'Швидкість', 60, 260, 5, fmts.manualWpm)}
     </div>
 
+    <div class="group-title">Запис відео</div>
+    <div class="group">
+      <div class="row"><span>Папка для відео</span><span class="row-value folder-name">…</span></div>
+      <div class="row folder-actions" hidden>
+        <button class="btn-plain-sm" data-folder="choose">Вибрати папку</button>
+        <button class="btn-plain-sm danger" data-folder="forget" hidden>Скинути</button>
+      </div>
+    </div>
+    <div class="group-footer folder-note"></div>
+
     <div class="group-title">Слова-паразити</div>
     <div class="group">
       <div class="row stack"><textarea data-key="fillers" rows="3" class="fillers" spellcheck="false">${esc(s.fillers)}</textarea></div>
@@ -188,6 +198,38 @@ export async function settingsScreen(root) {
     saveSettings({ [group.dataset.seg]: b.dataset.v });
     drawPreview();
   });
+  // Папка для відео: працює лише там, де є File System Access API.
+  const rec = await import('./recorder.js');
+  const folderName = root.querySelector('.folder-name');
+  const drawFolder = async () => {
+    if (!rec.folderSupported()) {
+      folderName.textContent = 'Завантаження';
+      root.querySelector('.folder-note').textContent =
+        'Вибір папки працює в Chrome і Edge на комп\'ютері. На телефоні відео потрапляє в «Завантаження» або через «Поділитися → Зберегти відео».';
+      return;
+    }
+    const dir = await rec.getVideoFolder();
+    folderName.textContent = dir ? dir.name : 'Не вибрано';
+    root.querySelector('.folder-actions').hidden = false;
+    root.querySelector('[data-folder="choose"]').textContent = dir ? 'Змінити папку' : 'Вибрати папку';
+    root.querySelector('[data-folder="forget"]').hidden = !dir;
+    root.querySelector('.folder-note').textContent = dir
+      ? 'Після запису кнопка «Зберегти» одразу кладе відео в цю папку.'
+      : 'Виберіть папку — і відео зберігатимуться туди одним натиском.';
+  };
+  drawFolder();
+  root.addEventListener('click', async e => {
+    const act = e.target.closest('[data-folder]')?.dataset.folder;
+    if (!act) return;
+    try {
+      if (act === 'choose') await rec.chooseVideoFolder();
+      else await rec.forgetVideoFolder();
+    } catch (err) {
+      if (err.name !== 'AbortError') console.warn(err);
+    }
+    drawFolder();
+  });
+
   const mq = matchMedia('(prefers-color-scheme: dark)');
   mq.addEventListener('change', drawPreview);
   return () => mq.removeEventListener('change', drawPreview);

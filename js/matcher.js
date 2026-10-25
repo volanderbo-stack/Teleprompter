@@ -118,6 +118,8 @@ export class Tracker {
   // spoken — усі нормалізовані сказані слова сесії (фінальні + проміжні). Повертає нову позицію.
   update(spoken) {
     this.lastCount = spoken.length;
+    // Проміжний результат може «схуднути» (два слова злились в одне) — не даємо хвосту зникнути.
+    if (this.ignoreBefore > spoken.length) this.ignoreBefore = spoken.length;
     const tail = spoken.slice(Math.max(this.ignoreBefore, spoken.length - TAIL));
     if (!tail.length || !this.script.length) return this.pos;
     const anchor = this.pos - 1; // останнє прочитане слово

@@ -305,27 +305,27 @@ export class PromptSession {
       lang: settings.lang,
       onWords: words => this.heard(words),
       onState: s => { this.micState = s; this.changed(); },
-      onError: (code, msg) => {
+      onError: msg => {
         toast(msg, 4500);
         this.micState = 'error';
         this.pause();
         this.setMode('manual');
       },
     });
-    try {
-      this.listener.start();
-    } catch {
-      this.listener.onError('start', 'Не вдалося запустити розпізнавання мови');
-    }
+    this.listener.start();
   }
 
   heard(words) {
     if (!this.playing || this.mode !== 'voice') return;
     const p = this.tracker.update(words);
     if (p !== this.pr.pos) this.pr.setPos(p);
-    if (p >= this.pr.words.length) {
+    // Кінець: дійшли до останнього слова, або лишилось 1–2 (розпізнавач міг їх не почути) і настала тиша.
+    const left = this.pr.words.length - p;
+    if (left <= 2) {
       clearTimeout(this.endTimer);
-      this.endTimer = setTimeout(() => { if (this.pr.pos >= this.pr.words.length) this.ended(); }, 1500);
+      this.endTimer = setTimeout(() => {
+        if (this.pr.words.length - this.pr.pos <= 2) { this.pr.setPos(this.pr.words.length); this.ended(); }
+      }, left ? 2500 : 1500);
     }
   }
 

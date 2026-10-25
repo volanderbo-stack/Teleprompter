@@ -4,6 +4,7 @@ import { PromptSession, bindControls, loadPlayable, modeSwitchHTML, panelHTML } 
 import { settings } from './settings.js';
 import { icon, esc, sheet, toast, fmtClock, isSheetOpen } from './ui.js';
 import { summaryHTML } from './stats.js';
+import { db } from './db.js';
 
 const MIME_CANDIDATES = [
   'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
@@ -94,29 +95,98 @@ async function shareFile(blob, name) {
 const canShareFiles = blob =>
   !!navigator.canShare?.({ files: [new File([blob], 'v', { type: blob.type })] });
 
+// --- Збереження в обрану папку (File System Access API: Chrome і Edge на комп'ютері) ---
+export const folderSupported = () => 'showDirectoryPicker' in window;
+
+export const getVideoFolder = () => db.get('kv', 'videoFolder').catch(() => null);
+export const forgetVideoFolder = () => db.del('kv', 'videoFolder');
+
+export async function chooseVideoFolder() {
+  const dir = await window.showDirectoryPicker({ id: 'suffler-videos', mode: 'readwrite', startIn: 'videos' });
+  await db.put('kv', dir, 'videoFolder');
+  return dir;
+}
+
+// Після перезапуску браузера доступ до папки треба підтвердити ще раз (запит покаже браузер).
+async function canWrite(dir) {
+  const opts = { mode: 'readwrite' };
+  if ((await dir.queryPermission(opts)) === 'granted') return true;
+  return (await dir.requestPermission(opts)) === 'granted';
+}
+
+async function writeFile(fileHandle, blob) {
+  const w = await fileHandle.createWritable();
+  await w.write(blob);
+  await w.close();
+}
+
+async function saveToFolder(dir, name, blob) {
+  if (!(await canWrite(dir))) throw new Error('Немає дозволу на запис у папку');
+  await writeFile(await dir.getFileHandle(name, { create: true }), blob);
+}
+
+async function saveAs(blob, name) {
+  const ext = name.split('.').pop();
+  const fh = await window.showSaveFilePicker({
+    suggestedName: name, id: 'suffler-videos', startIn: 'videos',
+    types: [{ description: 'Відео', accept: { [blob.type]: [`.${ext}`] } }],
+  });
+  await writeFile(fh, blob);
+  return fh.name;
+}
+
 // Шторка з готовим відео. Повертає 'again' | 'done'.
 async function videoSheet(blob, title, extraHTML = '') {
   const url = URL.createObjectURL(blob);
   const name = fileName(title, blob);
   const share = canShareFiles(blob);
   const mb = (blob.size / 1048576).toFixed(1);
-  const actions = [
-    { label: 'Зберегти відео', value: 'save', icon: 'import', style: 'btn-primary' },
-    ...(share ? [{ label: 'Поділитися / у Фото', value: 'share', icon: 'share', style: 'btn-tinted' }] : []),
-    { label: 'Записати ще раз', value: 'again', icon: 'video', style: 'btn-tinted' },
-    { label: 'Готово', value: 'done', style: 'btn-plain' },
-  ];
-  let saved = false;
+  let folder = folderSupported() ? await getVideoFolder() : null;
+  let savedNote = '';
+
   for (;;) {
+    const actions = [];
+    if (folderSupported()) {
+      if (folder) {
+        actions.push({ label: `Зберегти в «${folder.name}»`, value: 'folder', icon: 'import', style: 'btn-primary' });
+        actions.push({ label: 'Зберегти як…', value: 'saveas', style: 'btn-tinted' });
+      } else {
+        actions.push({ label: 'Вибрати папку і зберегти', value: 'pick', icon: 'import', style: 'btn-primary' });
+        actions.push({ label: 'Завантажити', value: 'download', style: 'btn-tinted' });
+      }
+    } else {
+      actions.push({ label: 'Зберегти відео', value: 'download', icon: 'import', style: 'btn-primary' });
+    }
+    if (share) actions.push({ label: 'Поділитися / у Фото', value: 'share', icon: 'share', style: 'btn-tinted' });
+    actions.push({ label: 'Записати ще раз', value: 'again', icon: 'video', style: 'btn-tinted' });
+    actions.push({ label: 'Готово', value: 'done', style: 'btn-plain' });
+
     const choice = await sheet({
       title: 'Відео готове',
       html: `<video class="rec-result" src="${url}" controls playsinline></video>
-        <p class="sheet-note">${esc(name)} · ${mb} МБ${saved ? ' · збережено' : ''}</p>${extraHTML}`,
+        <p class="sheet-note">${esc(name)} · ${mb} МБ${savedNote ? ` · <b>${esc(savedNote)}</b>` : ''}</p>${extraHTML}`,
       actions,
     });
-    if (choice === 'save') { downloadBlob(blob, name); saved = true; continue; }
-    if (choice === 'share') { if (await shareFile(blob, name)) saved = true; continue; }
-    if ((choice === 'again' || choice === 'done' || choice === null) && !saved) {
+    try {
+      if (choice === 'pick') {
+        folder = await chooseVideoFolder();
+        await saveToFolder(folder, name, blob);
+        savedNote = `збережено в «${folder.name}»`;
+        continue;
+      }
+      if (choice === 'folder') {
+        await saveToFolder(folder, name, blob);
+        savedNote = `збережено в «${folder.name}»`;
+        continue;
+      }
+      if (choice === 'saveas') { savedNote = `збережено як «${await saveAs(blob, name)}»`; continue; }
+      if (choice === 'download') { downloadBlob(blob, name); savedNote = 'завантажено'; continue; }
+      if (choice === 'share') { if (await shareFile(blob, name)) savedNote = 'надіслано'; continue; }
+    } catch (e) {
+      if (e.name !== 'AbortError') toast(`Не вдалося зберегти: ${e.message}`, 4000);
+      continue;
+    }
+    if (!savedNote) {
       const sure = await sheet({
         title: 'Відео не збережене',
         actions: [

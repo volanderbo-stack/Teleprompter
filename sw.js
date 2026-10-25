@@ -1,8 +1,9 @@
 // Service Worker: кешує оболонку застосунку для роботи офлайн.
-// Стратегія stale-while-revalidate: відповідаємо з кешу, а в фоні оновлюємо його з мережі.
+// Стратегія «спершу мережа»: онлайн завжди свіжі файли (без суміші старих і нових модулів),
+// офлайн — копія з кешу.
 // Додали новий файл — допишіть його в ASSETS і збільште VERSION.
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `suffler-${VERSION}`;
 const ASSETS = [
   './',
@@ -49,19 +50,15 @@ self.addEventListener('fetch', e => {
   const key = url.origin + url.pathname; // без ?query, щоб кеш не розростався копіями
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
-    const cached = await cache.match(key)
-      ?? (req.mode === 'navigate' ? await cache.match('index.html') : undefined);
-    // no-cache: перевіряємо в сервера свіжість, а не беремо застарілу копію з HTTP-кешу.
-    const network = fetch(req, { cache: 'no-cache' })
-      .then(res => {
-        if (res.ok && res.type === 'basic') cache.put(key, res.clone());
-        return res;
-      })
-      .catch(() => undefined);
-    if (cached) {
-      e.waitUntil(network);
-      return cached;
+    try {
+      // no-cache: перевіряємо в сервера свіжість, а не беремо застарілу копію з HTTP-кешу.
+      const res = await fetch(req, { cache: 'no-cache' });
+      if (res.ok && res.type === 'basic') e.waitUntil(cache.put(key, res.clone()));
+      return res;
+    } catch {
+      const cached = await cache.match(key)
+        ?? (req.mode === 'navigate' ? await cache.match('index.html') : undefined);
+      return cached ?? new Response('Офлайн', { status: 503, statusText: 'Offline' });
     }
-    return (await network) ?? new Response('Офлайн', { status: 503, statusText: 'Offline' });
   })());
 });
