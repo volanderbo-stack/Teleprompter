@@ -156,3 +156,68 @@ body.fullscreen { overflow: hidden; background: #000; }
   .pr-seg button span { display: none; }
   .pr-seg button { padding: 0 11px; }
 }
+
+/* --- Запис відео --- */
+.rec-screen { background: #000; color: #fff; }
+.rec-video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; transform: scaleX(-1); /* дзеркальне прев'ю, як у камері телефона */
+}
+.rec-overlay {
+  position: absolute; left: 0; right: 0; top: 0; height: 42%;
+  padding-top: calc(var(--sat) + 60px);
+}
+.rec-overlay .pr-host {
+  position: relative; height: 100%;
+  background: rgba(0, 0, 0, .55);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+}
+.rec-overlay .pr-viewport {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 82%, transparent 100%);
+}
+.rec-screen .pr-bottom { background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, .5) 50%); }
+
+.rec-timer {
+  display: flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 14px; border-radius: 18px;
+  background: rgba(0, 0, 0, .45); font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, .5); }
+.recording .rec-dot { background: #ff3b30; animation: mic-pulse 1s ease-in-out infinite; }
+
+.rec-btn {
+  width: 78px; height: 78px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 4px solid #fff;
+}
+.rec-btn span {
+  width: 60px; height: 60px; border-radius: 50%; background: #ff3b30;
+  transition: width .25s var(--ease), height .25s var(--ease), border-radius .25s var(--ease);
+}
+.recording .rec-btn span { width: 28px; height: 28px; border-radius: 7px; }
+.pr-play.pr-play-sm { width: 56px; height: 56px; }
+.pr-play.pr-play-sm .icon { width: 24px; height: 24px; }
+.rec-screen .pr-transport { gap: 18px; }
+.rec-screen.recording .pr-seg { pointer-events: none; opacity: .5; }
+
+.rec-count {
+  position: absolute; inset: 0; z-index: 8;
+  display: grid; place-items: center;
+  font-size: 160px; font-weight: 700; color: #fff;
+  text-shadow: 0 4px 30px rgba(0, 0, 0, .5);
+  pointer-events: none;
+}
+.rec-count.pop { animation: count-pop 1s var(--ease); }
+@keyframes count-pop { from { transform: scale(1.6); opacity: 0; } 30% { opacity: 1; } to { transform: scale(.9); opacity: .2; } }
+
+.rec-error {
+  position: absolute; inset: 0; z-index: 9;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  padding: 24px; text-align: center; background: #000;
+}
+.rec-error > .icon { width: 48px; height: 48px; opacity: .6; }
+.rec-error p { max-width: 380px; margin: 0; font-size: 17px; line-height: 1.45; }
+
+.rec-result { display: block; width: 100%; max-height: 50dvh; border-radius: 12px; background: #000; }
+.sheet-note { margin: 8px 0 0; color: var(--text-2); font-size: 13px; text-align: center; overflow-wrap: anywhere; }

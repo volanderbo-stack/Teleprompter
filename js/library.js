@@ -177,6 +177,7 @@ export async function editorScreen(root, id) {
   </div>
   <div class="action-bar">
     <button class="btn btn-primary" data-act="play">${icon('play')}Суфлер</button>
+    <button class="btn btn-tinted" data-act="record">${icon('video')}Запис</button>
   </div>`;
 
   const titleEl = root.querySelector('.editor-title');
@@ -242,10 +243,10 @@ export async function editorScreen(root, id) {
       deleted = true;
       await deleteScript(id);
       location.hash = '#/';
-    } else if (act === 'play') {
+    } else if (act === 'play' || act === 'record') {
       await saveSoon.flush();
       if (!updateStats()) { toast('Спочатку додайте текст'); return; }
-      location.hash = `#/play/${id}`;
+      location.hash = `#/${act}/${id}`;
     }
   });
 

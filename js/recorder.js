@@ -1,0 +1,256 @@
+// Запис відео: фронтальна камера + напівпрозорий суфлер угорі. У файл потрапляє лише камера і звук.
+
+import { PromptSession, bindControls, loadPlayable, modeSwitchHTML } from './prompter.js';
+import { settings } from './settings.js';
+import { icon, esc, sheet, toast, fmtClock, isSheetOpen } from './ui.js';
+
+const MIME_CANDIDATES = [
+  'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+  'video/mp4',
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm',
+];
+
+export function pickMimeType() {
+  if (!window.MediaRecorder) return null;
+  return MIME_CANDIDATES.find(t => MediaRecorder.isTypeSupported(t)) ?? '';
+}
+
+export async function openCamera() {
+  return navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+    audio: { echoCancellation: true, noiseSuppression: true },
+  });
+}
+
+const CAMERA_ERRORS = {
+  NotAllowedError: 'Немає доступу до камери або мікрофона. Дозвольте їх у налаштуваннях браузера.',
+  NotFoundError: 'Камеру не знайдено.',
+  NotReadableError: 'Камера зайнята іншим застосунком.',
+  OverconstrainedError: 'Камера не підтримує потрібний режим.',
+};
+
+export class Recorder {
+  constructor(stream) {
+    this.stream = stream;
+    this.mime = pickMimeType();
+    this.chunks = [];
+  }
+
+  start() {
+    this.chunks = [];
+    this.rec = new MediaRecorder(this.stream, this.mime ? { mimeType: this.mime } : undefined);
+    this.rec.ondataavailable = e => { if (e.data.size) this.chunks.push(e.data); };
+    this.rec.start(1000);
+    this.startedAt = Date.now();
+  }
+
+  stop() {
+    return new Promise(resolve => {
+      if (!this.rec || this.rec.state === 'inactive') { resolve(null); return; }
+      this.rec.onstop = () => {
+        const type = this.rec.mimeType || this.mime || 'video/webm';
+        resolve(new Blob(this.chunks, { type: type.split(';')[0] }));
+      };
+      this.rec.stop();
+    });
+  }
+
+  get recording() { return this.rec?.state === 'recording'; }
+}
+
+function fileName(title, blob) {
+  const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+  const d = new Date();
+  const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
+  const safe = (title || 'video').replace(/[\\/:*?"<>|]+/g, '').trim().slice(0, 40) || 'video';
+  return `${safe}_${stamp}.${ext}`;
+}
+
+export function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+async function shareFile(blob, name) {
+  const file = new File([blob], name, { type: blob.type });
+  try {
+    await navigator.share({ files: [file], title: name });
+    return true;
+  } catch (e) {
+    if (e.name !== 'AbortError') toast('Не вдалося поділитися — спробуйте «Зберегти»');
+    return false;
+  }
+}
+
+const canShareFiles = blob =>
+  !!navigator.canShare?.({ files: [new File([blob], 'v', { type: blob.type })] });
+
+// Шторка з готовим відео. Повертає 'again' | 'done'.
+async function videoSheet(blob, title, extraHTML = '') {
+  const url = URL.createObjectURL(blob);
+  const name = fileName(title, blob);
+  const share = canShareFiles(blob);
+  const mb = (blob.size / 1048576).toFixed(1);
+  const actions = [
+    { label: 'Зберегти відео', value: 'save', icon: 'import', style: 'btn-primary' },
+    ...(share ? [{ label: 'Поділитися / у Фото', value: 'share', icon: 'share', style: 'btn-tinted' }] : []),
+    { label: 'Записати ще раз', value: 'again', icon: 'video', style: 'btn-tinted' },
+    { label: 'Готово', value: 'done', style: 'btn-plain' },
+  ];
+  let saved = false;
+  for (;;) {
+    const choice = await sheet({
+      title: 'Відео готове',
+      html: `<video class="rec-result" src="${url}" controls playsinline></video>
+        <p class="sheet-note">${esc(name)} · ${mb} МБ${saved ? ' · збережено' : ''}</p>${extraHTML}`,
+      actions,
+    });
+    if (choice === 'save') { downloadBlob(blob, name); saved = true; continue; }
+    if (choice === 'share') { if (await shareFile(blob, name)) saved = true; continue; }
+    if ((choice === 'again' || choice === 'done' || choice === null) && !saved) {
+      const sure = await sheet({
+        title: 'Відео не збережене',
+        actions: [
+          { label: 'Не зберігати', value: true, style: 'btn-danger' },
+          { label: 'Назад', value: false, style: 'btn-plain' },
+        ],
+      });
+      if (!sure) continue;
+    }
+    URL.revokeObjectURL(url);
+    return choice === 'again' ? 'again' : 'done';
+  }
+}
+
+// --- Екран запису ---
+export async function recordScreen(root, id) {
+  const script = await loadPlayable(id);
+  if (!script) return;
+
+  root.innerHTML = `<div class="pr-screen rec-screen">
+    <video class="rec-video" playsinline muted autoplay></video>
+    <div class="rec-overlay"><div class="pr-host"></div></div>
+    <div class="pr-top">
+      <button class="pr-btn pr-sm" data-act="exit" aria-label="Закрити">${icon('close')}</button>
+      <div class="pr-mid">${modeSwitchHTML()}</div>
+      <div class="rec-timer"><span class="rec-dot"></span><span class="rec-time">0:00</span></div>
+    </div>
+    <div class="pr-bottom rec-bottom">
+      <div class="pr-mic"></div>
+      <div class="pr-transport">
+        <button class="pr-btn" data-act="prev" aria-label="Попередній абзац">${icon('para-back')}</button>
+        <button class="pr-btn pr-play pr-play-sm" data-act="toggle" aria-label="Текст: старт / пауза">${icon('play')}</button>
+        <button class="rec-btn" data-act="record" aria-label="Почати запис"><span></span></button>
+        <button class="pr-btn" data-act="next" aria-label="Наступний абзац">${icon('para-fwd')}</button>
+      </div>
+    </div>
+    <div class="rec-count" hidden></div>
+    <div class="rec-error" hidden></div>
+  </div>`;
+
+  const screen = root.querySelector('.rec-screen');
+  const $ = s => screen.querySelector(s);
+  const video = $('.rec-video');
+  const session = new PromptSession(screen, script, {
+    customColors: true, bgColor: '#000000', textColor: '#ffffff',
+    mirrorX: false, mirrorY: false,
+    fontSize: Math.min(settings.fontSize, 40), focus: 32,
+  });
+  let stream = null, recorder = null, timer = null, countdown = null, closed = false;
+
+  const exit = () => { location.hash = `#/script/${id}`; };
+  session.onFinish = () => {}; // текст закінчився — запис триває, доки його не зупинять
+  const unbind = bindControls(screen, session, { exit, finish: exit });
+
+  const showError = msg => {
+    const el = $('.rec-error');
+    el.hidden = false;
+    el.innerHTML = `${icon('video')}<p>${esc(msg)}</p><button class="btn btn-primary" data-act="exit">Назад</button>`;
+  };
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showError('Цей браузер не підтримує доступ до камери. Відкрийте застосунок через https або localhost.');
+  } else if (pickMimeType() === null) {
+    showError('Цей браузер не вміє записувати відео (немає MediaRecorder).');
+  } else {
+    try {
+      stream = await openCamera();
+      if (closed) { stream.getTracks().forEach(t => t.stop()); return; }
+      video.srcObject = stream;
+      recorder = new Recorder(stream);
+    } catch (e) {
+      showError(CAMERA_ERRORS[e.name] || `Не вдалося увімкнути камеру: ${e.message}`);
+    }
+  }
+
+  const setRecording = on => {
+    screen.classList.toggle('recording', on);
+    $('.rec-btn').setAttribute('aria-label', on ? 'Зупинити запис' : 'Почати запис');
+    clearInterval(timer);
+    $('.rec-time').textContent = '0:00';
+    if (on) timer = setInterval(() => { $('.rec-time').textContent = fmtClock(Date.now() - recorder.startedAt); }, 250);
+  };
+
+  const startCountdown = () => new Promise(resolve => {
+    const el = $('.rec-count');
+    let n = 3;
+    el.hidden = false;
+    const step = () => {
+      if (closed) { el.hidden = true; resolve(false); return; }
+      if (n === 0) { el.hidden = true; countdown = null; resolve(true); return; }
+      el.textContent = n;
+      el.classList.remove('pop');
+      void el.offsetWidth; // перезапуск анімації
+      el.classList.add('pop');
+      n--;
+      countdown = setTimeout(step, 1000);
+    };
+    step();
+  });
+
+  const toggleRecording = async () => {
+    if (!recorder || countdown) return;
+    if (recorder.recording) {
+      const blob = await recorder.stop();
+      session.pause();
+      setRecording(false);
+      if (!blob || !blob.size) { toast('Запис порожній'); return; }
+      const next = await videoSheet(blob, script.title, '');
+      if (next === 'done') exit();
+      else session.pr.jumpTo(0);
+      return;
+    }
+    session.pause();
+    if (!(await startCountdown())) return;
+    recorder.start();
+    setRecording(true);
+    session.play();
+  };
+
+  screen.addEventListener('click', e => {
+    if (e.target.closest('[data-act="record"]')) toggleRecording();
+  });
+  const onKey = e => {
+    if ((e.key === 'r' || e.key === 'к') && !e.repeat && !isSheetOpen() && !e.target.closest?.('input, textarea')) toggleRecording();
+  };
+  window.addEventListener('keydown', onKey);
+
+  return async () => {
+    closed = true;
+    clearTimeout(countdown);
+    clearInterval(timer);
+    window.removeEventListener('keydown', onKey);
+    if (recorder?.recording) await recorder.stop();
+    stream?.getTracks().forEach(t => t.stop());
+    unbind();
+    session.destroy();
+  };
+}

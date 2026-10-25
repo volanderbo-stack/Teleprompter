@@ -1,9 +1,9 @@
 // Точка входу: завантаження налаштувань і hash-роутинг між екранами.
 
-import { loadSettings } from './settings.js';
-import { settingsScreen } from './settings.js';
+import { loadSettings, settingsScreen } from './settings.js';
 import { libraryScreen, editorScreen } from './library.js';
 import { playScreen } from './prompter.js';
+import { recordScreen } from './recorder.js';
 
 const app = document.getElementById('app');
 
@@ -12,6 +12,7 @@ const routes = [
   { re: /^\/settings$/, tab: 'settings', screen: () => settingsScreen(app) },
   { re: /^\/script\/([\w-]+)$/, sub: true, screen: id => editorScreen(app, id) },
   { re: /^\/play\/([\w-]+)$/, full: true, screen: id => playScreen(app, id) },
+  { re: /^\/record\/([\w-]+)$/, full: true, screen: id => recordScreen(app, id) },
 ];
 
 let cleanup = null;
