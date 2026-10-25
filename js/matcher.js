@@ -12,10 +12,14 @@ export const tokenize = text => String(text).split(/\s+/).map(normalizeWord).fil
 const TAIL = 6;          // скільки останніх сказаних слів порівнюємо
 const BEHIND = 30;       // вікно пошуку назад
 const AHEAD = 80;        // вікно пошуку вперед
-const GAP = 0.4;         // штраф за пропуск слова (у сценарії чи в мовленні)
+const GAP_SPOKEN = 0.4;  // штраф за зайве сказане слово
+const GAP_SCRIPT = 0.25; // штраф за слово сценарію, якого розпізнавач не почув (у швидкій мові — часто)
 const MISMATCH = -0.5;
+const MERGE = 1.6;       // вага збігу «одне сказане = два злиті слова сценарію»
 const NEAR = 3;          // «сусідні» слова, куди можна перейти за одним збігом
+const MID = 10;          // помірний стрибок уперед: пропущене слово-два у швидкій мові
 const TH_NEAR = 0.9;
+const TH_MID = 1.7;
 const TH_FAR = 2.5;
 const TH_BACK = 3.5;
 const TH_GLOBAL = 4.5;
@@ -48,49 +52,85 @@ export function similarity(spoken, script) {
   if (min <= 2) v = 0;
   else if (spoken.length >= 4 && script.startsWith(spoken)) v = 0.8; // недоговорене проміжне слово
   else {
-    const r = 1 - levenshtein(spoken, script) / Math.max(spoken.length, script.length);
+    const max = Math.max(spoken.length, script.length);
+    const r = 1 - levenshtein(spoken, script) / max;
     v = r >= (min <= 3 ? 0.66 : 0.7) ? r : 0;
+    // Та сама основа з іншим закінченням («кнопки» → «кнопкам»): розпізнавач часто плутає відмінки.
+    if (!v && min >= 4 && commonPrefix(spoken, script) >= Math.max(4, max - 3)) v = 0.7;
   }
   if (simCache.size > 50000) simCache.clear();
   simCache.set(key, v);
   return v;
 }
 
+function commonPrefix(a, b) {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i;
+}
+
+// Чи є сказане слово двома словами сценарію, злитими докупи. Лише цілком: недоговорене
+// «програму» не повинно зійти за «програму вона».
+function mergeSimilarity(spoken, a, b) {
+  const both = a + b;
+  if (spoken === both) return 1;
+  if (spoken === a || spoken === b) return 0;
+  if (Math.abs(spoken.length - both.length) > 2) return 0;
+  const r = 1 - levenshtein(spoken, both) / Math.max(spoken.length, both.length);
+  // «прокручується» схоже і на «прокручується в» — але це просто перше слово, не злиття.
+  return r >= 0.8 && r > similarity(spoken, a) && r > similarity(spoken, b) ? r : 0;
+}
+
 // Короткі слова («і», «в», «на») зустрічаються всюди — вони важать менше.
 const weightOf = word => (word.length <= 2 ? 0.6 : 1);
 
 // Вирівнює хвіст мовлення з ділянкою сценарію [lo, hi).
-// Повертає кандидатів { end, score, matched } — кінцеві позиції, де останнє слово хвоста збіглося.
+// Повертає кандидатів { end, score, matched } — кінцеві позиції, де збіглося останнє (чи передостаннє) слово хвоста.
+// Крім звичайних кроків, одне сказане слово може відповідати двом злитим словам сценарію
+// (у швидкій мові розпізнавач склеює: «натиснітьтут»).
 export function alignTail(tail, script, lo, hi) {
   const k = tail.length, m = hi - lo;
   if (!k || m <= 0) return [];
   const H = Array.from({ length: k + 1 }, () => new Float32Array(m + 1));
-  const P = Array.from({ length: k + 1 }, () => new Uint8Array(m + 1)); // 0 стоп, 1 діагональ, 2 вгору, 3 вліво
-  const S = Array.from({ length: k }, () => new Float32Array(m));
+  const P = Array.from({ length: k + 1 }, () => new Uint8Array(m + 1)); // 0 стоп, 1 діагональ, 2 вгору, 3 вліво, 4 злиття
+  const G = Array.from({ length: k + 1 }, () => new Float32Array(m + 1)); // схожість на кроці 1/4
   for (let i = 1; i <= k; i++) {
     for (let j = 1; j <= m; j++) {
       const w = script[lo + j - 1];
       const sim = similarity(tail[i - 1], w);
-      S[i - 1][j - 1] = sim;
+      let best = 0, dir = 0, gain = 0;
       const diag = H[i - 1][j - 1] + (sim > 0 ? sim * weightOf(w) : MISMATCH);
-      const up = H[i - 1][j] - GAP;
-      const left = H[i][j - 1] - GAP;
-      let best = 0, dir = 0;
-      if (diag > best) { best = diag; dir = 1; }
-      if (up > best) { best = up; dir = 2; }
-      if (left > best) { best = left; dir = 3; }
+      if (diag > best) { best = diag; dir = 1; gain = sim; }
+      if (j >= 2 && tail[i - 1].length >= 5) {
+        const ms = mergeSimilarity(tail[i - 1], script[lo + j - 2], w);
+        const merge = H[i - 1][j - 2] + ms * MERGE;
+        if (ms > 0 && merge > best) { best = merge; dir = 4; gain = ms; }
+      }
+      const up = H[i - 1][j] - GAP_SPOKEN;
+      if (up > best) { best = up; dir = 2; gain = 0; }
+      const left = H[i][j - 1] - GAP_SCRIPT;
+      if (left > best) { best = left; dir = 3; gain = 0; }
       H[i][j] = best;
       P[i][j] = dir;
+      G[i][j] = gain;
     }
   }
   const out = [];
+  const isMatch = (i, j) => (P[i][j] === 1 || P[i][j] === 4) && G[i][j] > 0;
   for (let j = 1; j <= m; j++) {
-    if (P[k][j] !== 1 || S[k - 1][j - 1] <= 0) continue;
+    // Кандидат — збіг останнього сказаного слова; або передостаннього, якщо останнє розпізнане хибно
+    // (наприкінці фрази інакше довелося б чекати, поки людина заговорить знову).
+    let i = k;
+    if (!isMatch(k, j)) {
+      if (k < 3 || P[k][j] !== 2 || !isMatch(k - 1, j)) continue;
+      i = k - 1;
+    }
     const matched = [];
-    let i = k, jj = j;
+    let jj = j;
     while (i > 0 && jj > 0 && P[i][jj]) {
       const d = P[i][jj];
-      if (d === 1) { if (S[i - 1][jj - 1] > 0) matched.push(lo + jj - 1); i--; jj--; }
+      if (d === 1) { if (G[i][jj] > 0) matched.push(lo + jj - 1); i--; jj--; }
+      else if (d === 4) { matched.push(lo + jj - 1, lo + jj - 2); i--; jj -= 2; }
       else if (d === 2) i--;
       else jj--;
     }
@@ -132,6 +172,7 @@ export class Tracker {
         if (global) need = TH_GLOBAL;
         else if (d === 0) need = 0;
         else if (d > 0 && d <= NEAR) need = TH_NEAR;
+        else if (d > 0 && d <= MID) need = TH_MID;
         else if (d > 0) need = TH_FAR;
         else need = TH_BACK;
         if (d < 0 && tail.length < 4) continue;
